@@ -62,12 +62,9 @@ def get_hf_embeddings(texts):
         return []
     if not texts: return []
     
-    # URL estándar y de reserva
-    api_url = "https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2"
-    headers = {
-        "Authorization": f"Bearer {HF_API_KEY}",
-        "x-wait-for-model": "true"
-    }
+    # Nueva URL estándar de Hugging Face (Router 2024)
+    api_url = "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2"
+    headers = {"Authorization": f"Bearer {HF_API_KEY}", "x-wait-for-model": "true"}
     
     batch_size = 10
     all_embeddings = []
@@ -78,25 +75,23 @@ def get_hf_embeddings(texts):
             payload = {"inputs": batch, "options": {"wait_for_model": True}}
             response = requests.post(api_url, headers=headers, json=payload, timeout=25)
             
-            if response.status_code != 200:
-                LAST_ERROR = f"Heredoc Error {response.status_code} en {api_url}: {response.text[:50]}"
-                return all_embeddings
-                
-            batch_embeddings = response.json()
-            if isinstance(batch_embeddings, list):
-                all_embeddings.extend(batch_embeddings)
+            if response.status_code == 200:
+                batch_embeddings = response.json()
+                if isinstance(batch_embeddings, list):
+                    all_embeddings.extend(batch_embeddings)
+                else:
+                    LAST_ERROR = f"Error: Formato JSON inesperado"
             else:
-                LAST_ERROR = f"Invalid JSON format in batch {i}"
-                return all_embeddings
+                LAST_ERROR = f"API Error {response.status_code}: {response.text[:50]}"
+                break
         except Exception as e:
-            LAST_ERROR = f"Network Exception: {str(e)}"
-            return all_embeddings
+            LAST_ERROR = f"Excepción: {str(e)}"
+            break
 
     return all_embeddings
 
 def dot_product(v1, v2): return sum(x * y for x, y in zip(v1, v2))
 def magnitude(v): return math.sqrt(sum(x * x for x in v))
-
 def cosine_similarity_pure(v1, v2):
     mag1, mag2 = magnitude(v1), magnitude(v2)
     return dot_product(v1, v2) / (mag1 * mag2) if mag1 > 0 and mag2 > 0 else 0
@@ -107,9 +102,7 @@ def get_pdf_text(path):
     try:
         reader = PdfReader(path)
         return "\n".join(page.extract_text() or "" for page in reader.pages)
-    except Exception as e:
-        print(f"Error PDF: {e}")
-        return ""
+    except Exception as e: return ""
 
 def get_html_text(path):
     if not path or not os.path.exists(path): return ""
@@ -118,9 +111,7 @@ def get_html_text(path):
             soup = BeautifulSoup(f, 'html.parser')
             main = soup.find('main')
             return main.get_text(separator=' ') if main else ""
-    except Exception as e:
-        print(f"Error HTML: {e}")
-        return ""
+    except Exception as e: return ""
 
 def chunk_text(text, size, overlap):
     text = re.sub(r'\s+', ' ', text).strip()
@@ -133,27 +124,33 @@ def chunk_text(text, size, overlap):
 # --- Initialize Knowledge Base ---
 print("Consolidando el conocimiento del Oráculo...")
 all_chunks = []
-
 if PDF_PATH: all_chunks.extend(chunk_text(get_pdf_text(PDF_PATH), CHUNK_SIZE, CHUNK_OVERLAP))
 if HTML_PATH: all_chunks.extend(chunk_text(get_html_text(HTML_PATH), CHUNK_SIZE, CHUNK_OVERLAP))
 
 CHUNK_VECTORS = []
 if all_chunks and HF_API_KEY:
-    print(f"Generando embeddings para {len(all_chunks)} fragmentos...")
-    embeddings = get_hf_embeddings(all_chunks)
-    if embeddings:
-        CHUNK_VECTORS = embeddings
-        print("Vectores listos.")
+    CHUNK_VECTORS = get_hf_embeddings(all_chunks)
 
 def retrieve_context(query, top_k=TOP_K):
-    if not all_chunks or not CHUNK_VECTORS: return []
-    query_vecs = get_hf_embeddings([query])
-    if not query_vecs: return []
-    query_vec = query_vecs[0]
+    # Intentar búsqueda vectorial (Avanzada)
+    if all_chunks and CHUNK_VECTORS:
+        query_vecs = get_hf_embeddings([query])
+        if query_vecs:
+            query_vec = query_vecs[0]
+            sims = [cosine_similarity_pure(query_vec, doc_vec) for doc_vec in CHUNK_VECTORS]
+            results = sorted(enumerate(sims), key=lambda x: x[1], reverse=True)[:top_k]
+            return [all_chunks[i] for i, sim in results if sim > 0.1]
     
-    similarities = [cosine_similarity_pure(query_vec, doc_vec) for doc_vec in CHUNK_VECTORS]
-    results = sorted(enumerate(similarities), key=lambda x: x[1], reverse=True)[:top_k]
-    return [all_chunks[i] for i, sim in results if sim > 0.1]
+    # Fallback: Búsqueda por Palabras Clave (Básica)
+    print("DEBUG: Usando búsqueda de palabras clave de reserva.")
+    keywords = query.lower().split()
+    scored_chunks = []
+    for chunk in all_chunks:
+        score = sum(1 for word in keywords if word in chunk.lower())
+        if score > 0: scored_chunks.append((chunk, score))
+    
+    scored_chunks.sort(key=lambda x: x[1], reverse=True)
+    return [chunk for chunk, score in scored_chunks[:top_k]]
 
 # --- Generation ---
 def ask_groq(query, context_chunks):
