@@ -45,21 +45,48 @@ HF_API_KEY = os.environ.get("HUGGINGFACE_API_KEY")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
+LAST_ERROR = "Ninguno"
+
 # --- Clients ---
 hf_client = InferenceClient(token=HF_API_KEY)
 groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 # --- Retrieval Helpers ---
 def get_hf_embeddings(texts):
-    if not HF_API_KEY: return []
-    if not texts: return []
-    try:
-        embeddings = hf_client.feature_extraction(texts, model=EMBEDDING_MODEL)
-        if hasattr(embeddings, 'tolist'): return embeddings.tolist()
-        return embeddings
-    except Exception as e:
-        print(f"Error en embeddings HF: {e}")
+    global LAST_ERROR
+    if not HF_API_KEY: 
+        LAST_ERROR = "Falta HF_API_KEY"
         return []
+    if not texts: return []
+    
+    # Batch processing to avoid timeouts and large payloads
+    batch_size = 10
+    all_embeddings = []
+    
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i:i + batch_size]
+        try:
+            # Using hf_client.post to have full control over the payload and wait_for_model
+            response = hf_client.post(
+                json={"inputs": batch, "options": {"wait_for_model": True}},
+                model=EMBEDDING_MODEL,
+                task="feature-extraction"
+            )
+            # The response is usually a list of lists (embeddings)
+            import json
+            batch_embeddings = json.loads(response.decode("utf-8"))
+            
+            if isinstance(batch_embeddings, list):
+                all_embeddings.extend(batch_embeddings)
+            else:
+                LAST_ERROR = f"Respuesta inesperada en batch {i}: {batch_embeddings}"
+                return all_embeddings # Return what we have
+        except Exception as e:
+            LAST_ERROR = f"Error en batch {i}: {str(e)}"
+            print(f"DEBUG Error: {LAST_ERROR}")
+            return all_embeddings # Return whatever we successfully got
+
+    return all_embeddings
 
 def dot_product(v1, v2): return sum(x * y for x, y in zip(v1, v2))
 def magnitude(v): return math.sqrt(sum(x * x for x in v))
@@ -149,7 +176,7 @@ def chat():
     if not query: return jsonify({"answer": "Habla, mortal..."})
     
     # Diagnostic Info
-    diag = f"(PDF:{bool(PDF_PATH)}, Chunks:{len(all_chunks)}, Vectors:{len(CHUNK_VECTORS)}, API_HF:{bool(HF_API_KEY)})"
+    diag = f"(PDF:{bool(PDF_PATH)}, Chunks:{len(all_chunks)}, Vectors:{len(CHUNK_VECTORS)}, API_HF:{bool(HF_API_KEY)}, Error:{LAST_ERROR})"
 
     if not all_chunks or not CHUNK_VECTORS:
         return jsonify({"answer": f"El Oráculo está mudo. Las sombras bloquean su visión. {diag}"})
@@ -159,6 +186,9 @@ def chat():
         answer = f"Las sombras no revelan nada sobre eso en mis crónicas. {diag}"
     else:
         answer = ask_groq(query, context_chunks)
+
+    return jsonify({"answer": answer})
+t_chunks)
 
     return jsonify({"answer": answer})
 
