@@ -62,8 +62,8 @@ def get_hf_embeddings(texts):
         return []
     if not texts: return []
     
-    # Nueva URL estándar de Hugging Face (Router 2024)
-    api_url = "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2"
+    # Nueva URL estándar de Hugging Face (Router 2024 + Tarea Específica)
+    api_url = "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2/pipeline/feature-extraction"
     headers = {"Authorization": f"Bearer {HF_API_KEY}", "x-wait-for-model": "true"}
     
     batch_size = 10
