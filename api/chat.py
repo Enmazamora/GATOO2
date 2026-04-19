@@ -62,7 +62,7 @@ def get_hf_embeddings(texts):
         return []
     if not texts: return []
     
-    api_url = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{EMBEDDING_MODEL}"
+    api_url = f"https://api-inference.huggingface.co/models/{EMBEDDING_MODEL}"
     headers = {"Authorization": f"Bearer {HF_API_KEY}"}
     
     # Batch processing to avoid timeouts and large payloads
