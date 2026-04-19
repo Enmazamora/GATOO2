@@ -1,0 +1,14 @@
+{
+  "version": 2,
+  "rewrites": [
+    {
+      "source": "/api/chat",
+      "destination": "/api/chat.py"
+    }
+  ],
+  "functions": {
+    "api/chat.py": {
+      "includeFiles": "api/**"
+    }
+  }
+}
