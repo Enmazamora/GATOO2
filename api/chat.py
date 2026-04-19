@@ -51,6 +51,9 @@ LAST_ERROR = "Ninguno"
 hf_client = InferenceClient(token=HF_API_KEY)
 groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
+import requests
+import json
+
 # --- Retrieval Helpers ---
 def get_hf_embeddings(texts):
     global LAST_ERROR
@@ -59,6 +62,9 @@ def get_hf_embeddings(texts):
         return []
     if not texts: return []
     
+    api_url = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{EMBEDDING_MODEL}"
+    headers = {"Authorization": f"Bearer {HF_API_KEY}"}
+    
     # Batch processing to avoid timeouts and large payloads
     batch_size = 10
     all_embeddings = []
@@ -66,25 +72,23 @@ def get_hf_embeddings(texts):
     for i in range(0, len(texts), batch_size):
         batch = texts[i:i + batch_size]
         try:
-            # Using hf_client.post to have full control over the payload and wait_for_model
-            response = hf_client.post(
-                json={"inputs": batch, "options": {"wait_for_model": True}},
-                model=EMBEDDING_MODEL,
-                task="feature-extraction"
-            )
-            # The response is usually a list of lists (embeddings)
-            import json
-            batch_embeddings = json.loads(response.decode("utf-8"))
+            payload = {"inputs": batch, "options": {"wait_for_model": True}}
+            response = requests.post(api_url, headers=headers, json=payload, timeout=20)
+            
+            if response.status_code != 200:
+                LAST_ERROR = f"Error API {response.status_code}: {response.text}"
+                return all_embeddings
+                
+            batch_embeddings = response.json()
             
             if isinstance(batch_embeddings, list):
                 all_embeddings.extend(batch_embeddings)
             else:
-                LAST_ERROR = f"Respuesta inesperada en batch {i}: {batch_embeddings}"
-                return all_embeddings # Return what we have
+                LAST_ERROR = f"Respuesta no lista en batch {i}: {str(batch_embeddings)[:100]}"
+                return all_embeddings
         except Exception as e:
-            LAST_ERROR = f"Error en batch {i}: {str(e)}"
-            print(f"DEBUG Error: {LAST_ERROR}")
-            return all_embeddings # Return whatever we successfully got
+            LAST_ERROR = f"Excepción en batch {i}: {str(e)}"
+            return all_embeddings
 
     return all_embeddings
 
