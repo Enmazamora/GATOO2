@@ -188,9 +188,6 @@ def chat():
         answer = ask_groq(query, context_chunks)
 
     return jsonify({"answer": answer})
-t_chunks)
-
-    return jsonify({"answer": answer})
 
 if __name__ == '__main__':
     app.run(port=5000, debug=False)
