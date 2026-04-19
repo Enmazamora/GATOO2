@@ -4,6 +4,5 @@ pypdf
 beautifulsoup4
 groq
 requests
-numpy
 python-dotenv
 huggingface_hub

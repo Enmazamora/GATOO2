@@ -1,6 +1,6 @@
 import os
 import re
-import numpy as np
+import math
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from pypdf import PdfReader
@@ -38,7 +38,7 @@ def get_hf_embeddings(texts):
     if not texts: return []
     try:
         embeddings = hf_client.feature_extraction(texts, model=EMBEDDING_MODEL)
-        # InferenceClient returns numpy arrays or lists depending on input
+        # Convert to list if it's a numpy array from InferenceClient
         if hasattr(embeddings, 'tolist'):
             return embeddings.tolist()
         return embeddings
@@ -46,12 +46,17 @@ def get_hf_embeddings(texts):
         print(f"Error en embeddings HF: {e}")
         return []
 
-def cosine_similarity(v1, v2_matrix):
-    if v2_matrix.size == 0: return []
-    dot_product = np.dot(v2_matrix, v1)
-    norm_v1 = np.linalg.norm(v1)
-    norm_v2 = np.linalg.norm(v2_matrix, axis=1)
-    return dot_product / (norm_v1 * norm_v2)
+def dot_product(v1, v2):
+    return sum(x * y for x, y in zip(v1, v2))
+
+def magnitude(v):
+    return math.sqrt(sum(x * x for x in v))
+
+def cosine_similarity_pure(v1, v2):
+    mag1 = magnitude(v1)
+    mag2 = magnitude(v2)
+    if mag1 == 0 or mag2 == 0: return 0
+    return dot_product(v1, v2) / (mag1 * mag2)
 
 # --- Text Extraction ---
 def get_pdf_text(path):
@@ -88,38 +93,33 @@ if pdf_text: all_chunks.extend(chunk_text(pdf_text, CHUNK_SIZE, CHUNK_OVERLAP))
 html_text = get_html_text(HTML_PATH)
 if html_text: all_chunks.extend(chunk_text(html_text, CHUNK_SIZE, CHUNK_OVERLAP))
 
-CHUNK_VECTORS = np.array([])
+CHUNK_VECTORS = []
 if all_chunks:
     print(f"Generando embeddings para {len(all_chunks)} fragmentos...")
     embeddings = get_hf_embeddings(all_chunks)
     if embeddings:
-        CHUNK_VECTORS = np.array(embeddings)
+        CHUNK_VECTORS = embeddings
         print("Vectores listos.")
     else:
         print("ERROR: Fallo al generar vectores.")
 
 def retrieve_context(query, top_k=TOP_K):
-    if not all_chunks or CHUNK_VECTORS.size == 0: return []
-    query_vec = get_hf_embeddings([query])
-    if not query_vec: return []
+    if not all_chunks or not CHUNK_VECTORS: return []
+    query_vecs = get_hf_embeddings([query])
+    if not query_vecs: return []
+    query_vec = query_vecs[0]
     
-    similarities = cosine_similarity(np.array(query_vec[0]), CHUNK_VECTORS)
+    similarities = [cosine_similarity_pure(query_vec, doc_vec) for doc_vec in CHUNK_VECTORS]
     results = sorted(enumerate(similarities), key=lambda x: x[1], reverse=True)[:top_k]
     return [all_chunks[i] for i, sim in results if sim > 0.1]
 
 # --- Generation ---
 def ask_groq(query, context_chunks):
-    if not groq_client:
-        return "No se ha configurado Groq para las respuestas."
-    
+    if not groq_client: return "No se ha configurado Groq para las respuestas."
     context = "\n\n---\n\n".join(context_chunks)
-    prompt = f"Eres el Oráculo de Plutón... [Responde en español con tono gótico basándote en este contexto: {context}] Mortal pregunta: {query}"
-    
     try:
-        # Prompt más detallado para el Oráculo
         system_prompt = "Eres el Oráculo de Plutón, el espíritu del gato negro. Respondes con sabiduría oscura y literaria, basándote en el cuento de Poe."
         user_prompt = f"CONTEXTO REGISTRADO:\n{context}\n\nPREGUNTA DEL MORTAL: {query}"
-        
         completion = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
@@ -139,16 +139,13 @@ def ask_groq(query, context_chunks):
 def chat():
     data = request.json or {}
     query = data.get('query', '').strip()
-    
     if not query: return jsonify({"answer": "Habla, mortal..."})
     if not all_chunks: return jsonify({"answer": "Mi conocimiento está perdido."})
-
     context_chunks = retrieve_context(query)
     if not context_chunks:
         answer = "Las sombras no revelan nada sobre eso. Pregunta sobre el gato o el destino oscuro."
     else:
         answer = ask_groq(query, context_chunks)
-
     return jsonify({"answer": answer})
 
 if __name__ == '__main__':

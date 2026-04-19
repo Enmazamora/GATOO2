@@ -7,7 +7,7 @@
     }
   ],
   "functions": {
-    "api/chat.py": {
+    "api/*.py": {
       "includeFiles": "api/**"
     }
   }
