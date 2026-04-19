@@ -62,10 +62,13 @@ def get_hf_embeddings(texts):
         return []
     if not texts: return []
     
-    api_url = f"https://api-inference.huggingface.co/models/{EMBEDDING_MODEL}"
-    headers = {"Authorization": f"Bearer {HF_API_KEY}"}
+    # URL estándar y de reserva
+    api_url = "https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2"
+    headers = {
+        "Authorization": f"Bearer {HF_API_KEY}",
+        "x-wait-for-model": "true"
+    }
     
-    # Batch processing to avoid timeouts and large payloads
     batch_size = 10
     all_embeddings = []
     
@@ -73,21 +76,20 @@ def get_hf_embeddings(texts):
         batch = texts[i:i + batch_size]
         try:
             payload = {"inputs": batch, "options": {"wait_for_model": True}}
-            response = requests.post(api_url, headers=headers, json=payload, timeout=20)
+            response = requests.post(api_url, headers=headers, json=payload, timeout=25)
             
             if response.status_code != 200:
-                LAST_ERROR = f"Error API {response.status_code}: {response.text}"
+                LAST_ERROR = f"Heredoc Error {response.status_code} en {api_url}: {response.text[:50]}"
                 return all_embeddings
                 
             batch_embeddings = response.json()
-            
             if isinstance(batch_embeddings, list):
                 all_embeddings.extend(batch_embeddings)
             else:
-                LAST_ERROR = f"Respuesta no lista en batch {i}: {str(batch_embeddings)[:100]}"
+                LAST_ERROR = f"Invalid JSON format in batch {i}"
                 return all_embeddings
         except Exception as e:
-            LAST_ERROR = f"Excepción en batch {i}: {str(e)}"
+            LAST_ERROR = f"Network Exception: {str(e)}"
             return all_embeddings
 
     return all_embeddings
